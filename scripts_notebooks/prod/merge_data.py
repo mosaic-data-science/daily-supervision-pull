@@ -402,10 +402,14 @@ def merge_data_main(transformed_df: pd.DataFrame = None, bacb_df: pd.DataFrame =
             
             # Also save to Google Drive folder
             google_drive_folder = '/Users/davidjcox/Library/CloudStorage/GoogleDrive-dcox@mosaictherapy.com/.shortcut-targets-by-id/1Mh9gqV27KkEEuyX6M35_SB_vTErRz7Gm/DailyRBTTracking'
+            google_drive_folder2 = 'G:/.shortcut-targets-by-id/10MVMkxZfVuZY9Q4RfE_vHZ2_kaQk85E-/RBT Supervision Tracking/DailyRBTTracking'
             try:
                 save_to_google_drive_folder(output_file, google_drive_folder, logger)
             except Exception as e:
-                logger.warning(f"Failed to save to Google Drive folder: {e}")
+                try:
+                    save_to_google_drive_folder(output_file, google_drive_folder2, logger)
+                except Exception as e:
+                    logger.warning(f"Failed to save to Google Drive folder: {e}")
         else:
             # Fallback: save as single sheet if Clinic column doesn't exist
             logger.warning("'Clinic' column not found, saving as single sheet")
@@ -500,10 +504,14 @@ def merge_data_main(transformed_df: pd.DataFrame = None, bacb_df: pd.DataFrame =
             
             # Also save to Google Drive folder
             google_drive_folder = '/Users/davidjcox/Library/CloudStorage/GoogleDrive-dcox@mosaictherapy.com/.shortcut-targets-by-id/1Mh9gqV27KkEEuyX6M35_SB_vTErRz7Gm/DailyRBTTracking'
+            google_drive_folder2 = 'G:/.shortcut-targets-by-id/10MVMkxZfVuZY9Q4RfE_vHZ2_kaQk85E-/RBT Supervision Tracking/DailyRBTTracking'
             try:
                 save_to_google_drive_folder(output_file, google_drive_folder, logger)
             except Exception as e:
-                logger.warning(f"Failed to save to Google Drive folder: {e}")
+                try:
+                    save_to_google_drive_folder(output_file, google_drive_folder2, logger)
+                except Exception as e:
+                    logger.warning(f"Failed to save to Google Drive folder: {e}")
     
     logger.info("="*50)
     logger.info("Data merge completed successfully!")

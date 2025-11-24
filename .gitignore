@@ -176,6 +176,39 @@ ehthumbs.db
 Thumbs.db
 desktop.ini
 
+# Windows-specific files
+*.lnk
+*.url
+*.bat
+*.cmd
+*.ps1
+*.vbs
+*.exe
+*.dll
+*.msi
+*.msix
+*.msixbundle
+AppData/
+Local Settings/
+$RECYCLE.BIN/
+*.stackdump
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.userprefs
+*.cab
+*.msm
+*.msp
+NTUSER.DAT*
+ntuser.dat*
+*.regtrans-ms
+
+# Windows Task Scheduler scripts (PC-specific)
+setup_task_scheduler.bat
+setup_task_scheduler.ps1
+scripts_notebooks/prod/run_pipeline_wrapper.bat
+
 # Temporary files
 tmp/
 temp/
