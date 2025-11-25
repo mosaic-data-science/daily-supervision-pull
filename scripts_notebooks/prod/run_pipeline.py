@@ -2,10 +2,11 @@
 """
 Pipeline Orchestrator Script
 
-This script executes the three-phase data processing pipeline in order:
-1. pull_data.py - Pull data from database
-2. transform_data.py - Transform raw data
-3. merge_data.py - Merge BACB data with transformed data
+This script executes the four-phase data processing pipeline in order:
+1. pull_data.py - Pull direct, supervision, and BACB data from database
+2. join_supervision_data.py - Join direct and supervision data
+3. transform_data.py - Transform raw data
+4. merge_data.py - Merge BACB data with transformed data
 
 Usage:
     python run_pipeline.py [--start-date YYYY-MM-DD]
@@ -18,6 +19,7 @@ import argparse
 import subprocess
 from datetime import datetime, timedelta
 from pull_data import pull_data_main
+from join_supervision_data import join_supervision_data_main
 from transform_data import transform_data_main
 from merge_data import merge_data_main
 
@@ -126,26 +128,35 @@ def main():
         logger.info("PHASE 1: PULLING DATA FROM DATABASE")
         logger.info("="*70)
         logger.info("Executing pull_data.py...")
-        raw_df, bacb_df = pull_data_main(start_date=start_date, end_date=end_date, save_files=True)
-        logger.info("✓ Phase 1 completed successfully")
+        direct_df, supervision_df, bacb_df, employee_locations_df = pull_data_main(start_date=start_date, end_date=end_date, save_files=True)
+        logger.info("Phase 1 completed successfully")
         
-        # Phase 2: Transform data
+        # Phase 2: Join direct and supervision data
         logger.info("")
         logger.info("="*70)
-        logger.info("PHASE 2: TRANSFORMING DATA")
+        logger.info("PHASE 2: JOINING DIRECT AND SUPERVISION DATA")
+        logger.info("="*70)
+        logger.info("Executing join_supervision_data.py...")
+        joined_df = join_supervision_data_main(direct_df=direct_df, supervision_df=supervision_df, save_file=True)
+        logger.info("Phase 2 completed successfully")
+        
+        # Phase 3: Transform data
+        logger.info("")
+        logger.info("="*70)
+        logger.info("PHASE 3: TRANSFORMING DATA")
         logger.info("="*70)
         logger.info("Executing transform_data.py...")
-        transformed_df = transform_data_main(df=raw_df, save_file=True)
-        logger.info("✓ Phase 2 completed successfully")
+        transformed_df = transform_data_main(df=joined_df, save_file=True)
+        logger.info("Phase 3 completed successfully")
         
-        # Phase 3: Merge data
+        # Phase 4: Merge data
         logger.info("")
         logger.info("="*70)
-        logger.info("PHASE 3: MERGING DATA")
+        logger.info("PHASE 4: MERGING DATA")
         logger.info("="*70)
         logger.info("Executing merge_data.py...")
-        final_df = merge_data_main(transformed_df=transformed_df, bacb_df=bacb_df, save_file=True)
-        logger.info("✓ Phase 3 completed successfully")
+        final_df = merge_data_main(transformed_df=transformed_df, bacb_df=bacb_df, employee_locations_df=employee_locations_df, save_file=True)
+        logger.info("Phase 4 completed successfully")
         
         # Summary
         logger.info("")

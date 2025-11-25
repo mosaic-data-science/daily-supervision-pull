@@ -18,7 +18,7 @@ import argparse
 from datetime import datetime, timedelta
 from typing import Tuple
 from dotenv import load_dotenv
-from sql_queries import SUPERVISION_HOURS_SQL_TEMPLATE, BACB_SUPERVISION_TEMPLATE
+from sql_queries import DIRECT_SERVICES_SQL_TEMPLATE, SUPERVISION_SERVICES_SQL_TEMPLATE, BACB_SUPERVISION_TEMPLATE, EMPLOYEE_LOCATIONS_SQL_TEMPLATE
 
 
 def setup_logging(log_dir: str = None) -> logging.Logger:
@@ -125,9 +125,9 @@ def get_db_connection(server: str, username: str, password: str):
     raise Exception("All ODBC drivers failed")
 
 
-def execute_supervision_query(conn, start_date: str, end_date: str) -> pd.DataFrame:
+def execute_direct_query(conn, start_date: str, end_date: str) -> pd.DataFrame:
     """
-    Execute the main supervision hours SQL query.
+    Execute the direct services SQL query.
     
     Args:
         conn: Database connection
@@ -137,10 +137,29 @@ def execute_supervision_query(conn, start_date: str, end_date: str) -> pd.DataFr
     Returns:
         pd.DataFrame: Query results
     """
-    sql_query = SUPERVISION_HOURS_SQL_TEMPLATE.format(start_date=start_date, end_date=end_date)
-    logging.info(f"Executing supervision query with start_date: {start_date}, end_date: {end_date}")
+    sql_query = DIRECT_SERVICES_SQL_TEMPLATE.format(start_date=start_date, end_date=end_date)
+    logging.info(f"Executing direct services query with start_date: {start_date}, end_date: {end_date}")
     df = pd.read_sql(sql_query, conn)
-    logging.info(f"Supervision query retrieved {len(df)} rows")
+    logging.info(f"Direct services query retrieved {len(df)} rows")
+    return df
+
+
+def execute_supervision_query(conn, start_date: str, end_date: str) -> pd.DataFrame:
+    """
+    Execute the supervision services SQL query.
+    
+    Args:
+        conn: Database connection
+        start_date (str): Start date in YYYY-MM-DD format
+        end_date (str): End date in YYYY-MM-DD format
+        
+    Returns:
+        pd.DataFrame: Query results
+    """
+    sql_query = SUPERVISION_SERVICES_SQL_TEMPLATE.format(start_date=start_date, end_date=end_date)
+    logging.info(f"Executing supervision services query with start_date: {start_date}, end_date: {end_date}")
+    df = pd.read_sql(sql_query, conn)
+    logging.info(f"Supervision services query retrieved {len(df)} rows")
     return df
 
 
@@ -163,7 +182,24 @@ def execute_bacb_query(conn, start_date: str, end_date: str) -> pd.DataFrame:
     return df
 
 
-def pull_data_main(start_date: str = None, end_date: str = None, save_files: bool = True) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def execute_employee_locations_query(conn) -> pd.DataFrame:
+    """
+    Execute the employee locations SQL query.
+    
+    Args:
+        conn: Database connection
+        
+    Returns:
+        pd.DataFrame: Query results with ProviderContactId, ProviderFirstName, ProviderLastName, WorkLocation
+    """
+    sql_query = EMPLOYEE_LOCATIONS_SQL_TEMPLATE
+    logging.info("Executing employee locations query...")
+    df = pd.read_sql(sql_query, conn)
+    logging.info(f"Employee locations query retrieved {len(df)} rows")
+    return df
+
+
+def pull_data_main(start_date: str = None, end_date: str = None, save_files: bool = True) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Main function to pull data from database.
     
@@ -173,7 +209,7 @@ def pull_data_main(start_date: str = None, end_date: str = None, save_files: boo
         save_files (bool): Whether to save files to disk. Default True.
         
     Returns:
-        Tuple[pd.DataFrame, pd.DataFrame]: (supervision_df, bacb_df)
+        Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]: (direct_df, supervision_df, bacb_df, employee_locations_df)
     """
     # Load environment variables
     load_dotenv()
@@ -214,36 +250,56 @@ def pull_data_main(start_date: str = None, end_date: str = None, save_files: boo
     # Connect to database
     conn = get_db_connection(server, username, password)
     
-    # Execute supervision query
-    logger.info("Pulling main supervision hours data...")
+    # Execute direct services query
+    logger.info("Pulling direct services data...")
+    direct_df = execute_direct_query(conn, start_date, end_date)
+    
+    # Execute supervision services query
+    logger.info("Pulling supervision services data...")
     supervision_df = execute_supervision_query(conn, start_date, end_date)
     
     # Execute BACB query
     logger.info("Pulling BACB supervision data...")
     bacb_df = execute_bacb_query(conn, start_date, end_date)
     
+    # Execute employee locations query
+    logger.info("Pulling employee locations data...")
+    employee_locations_df = execute_employee_locations_query(conn)
+    
     # Close connection
     conn.close()
     
     if save_files:
-        # Save supervision data
-        raw_output = f'../../data/raw_pulls/daily_supervision_hours_{today}.csv'
-        os.makedirs(os.path.dirname(raw_output), exist_ok=True)
-        supervision_df.to_csv(raw_output, index=False)
-        logger.info(f"Saved supervision data to: {raw_output}")
+        # Save direct services data
+        direct_output = f'../../data/raw_pulls/direct_services_{today}.csv'
+        os.makedirs(os.path.dirname(direct_output), exist_ok=True)
+        direct_df.to_csv(direct_output, index=False)
+        logger.info(f"Saved direct services data to: {direct_output}")
+        
+        # Save supervision services data
+        supervision_output = f'../../data/raw_pulls/supervision_services_{today}.csv'
+        os.makedirs(os.path.dirname(supervision_output), exist_ok=True)
+        supervision_df.to_csv(supervision_output, index=False)
+        logger.info(f"Saved supervision services data to: {supervision_output}")
         
         # Save BACB data
         bacb_output = f'../../data/raw_pulls/bacb_supervision_hours_{today}.csv'
         os.makedirs(os.path.dirname(bacb_output), exist_ok=True)
         bacb_df.to_csv(bacb_output, index=False)
         logger.info(f"Saved BACB data to: {bacb_output}")
+        
+        # Save employee locations data
+        employee_locations_output = f'../../data/raw_pulls/employee_locations_{today}.csv'
+        os.makedirs(os.path.dirname(employee_locations_output), exist_ok=True)
+        employee_locations_df.to_csv(employee_locations_output, index=False)
+        logger.info(f"Saved employee locations data to: {employee_locations_output}")
     
     logger.info("="*50)
     logger.info(f"Data pull completed successfully!")
-    logger.info(f"Supervision: {len(supervision_df)} rows, BACB: {len(bacb_df)} rows")
+    logger.info(f"Direct: {len(direct_df)} rows, Supervision: {len(supervision_df)} rows, BACB: {len(bacb_df)} rows, Employee Locations: {len(employee_locations_df)} rows")
     logger.info("="*50)
     
-    return supervision_df, bacb_df
+    return direct_df, supervision_df, bacb_df, employee_locations_df
 
 
 def main():
@@ -258,7 +314,7 @@ def main():
     args = parser.parse_args()
     
     try:
-        pull_data_main(start_date=args.start_date, save_files=True)
+        pull_data_main(start_date=args.start_date, end_date=None, save_files=True)
         return 0
     except Exception as e:
         logging.error(f"Error in data pull: {e}")

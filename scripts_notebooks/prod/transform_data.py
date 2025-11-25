@@ -283,9 +283,27 @@ def transform_data(df: pd.DataFrame, logger: logging.Logger) -> pd.DataFrame:
         transformed_df.loc[diagnostics_mask, 'Clinic'] = transformed_df.loc[diagnostics_mask, 'DirectServiceLocationName']
         logger.info(f"Replaced 'Diagnostics' in Clinic column with DirectServiceLocationName for {diagnostics_mask.sum()} rows")
     
-    # Drop the original location columns and add provider names
-    transformed_df.drop(columns=['ClientOfficeLocationName', 'DirectServiceLocationName'], inplace=True)
+    # Add provider names before final aggregation
     transformed_df['DirectProviderName'] = transformed_df['DirectProviderId'].map(direct_dict)
+    
+    # Final aggregation by provider and cleaned clinic name to eliminate duplicates
+    # This handles cases where different ClientOfficeLocationName values cleaned to the same clinic name
+    logger.info(f"Before final aggregation: {len(transformed_df)} rows")
+    transformed_df = transformed_df.groupby([
+        'DirectProviderId',
+        'Clinic'
+    ]).agg({
+        'DirectHours': 'sum',
+        'SupervisionHours': 'sum',
+        'DirectProviderName': 'first'  # Should be the same for all rows with same provider ID
+    }).reset_index()
+    logger.info(f"After final aggregation by provider and clinic: {len(transformed_df)} rows")
+    
+    # Drop the original location columns (no longer needed after aggregation)
+    if 'ClientOfficeLocationName' in transformed_df.columns:
+        transformed_df.drop(columns=['ClientOfficeLocationName'], inplace=True)
+    if 'DirectServiceLocationName' in transformed_df.columns:
+        transformed_df.drop(columns=['DirectServiceLocationName'], inplace=True)
     
     # Reorder columns and sort
     transformed_df = transformed_df[[
