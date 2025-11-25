@@ -199,7 +199,47 @@ def merge_data(transformed_df: pd.DataFrame, bacb_df: pd.DataFrame, logger: logg
     return merged_df
 
 
+def add_work_locations_from_sql(final_df: pd.DataFrame, employee_locations_df: pd.DataFrame, logger: logging.Logger) -> pd.DataFrame:
+    """
+    Add WorkLocation column to final dataframe by matching provider contact IDs.
+    
+    Args:
+        final_df: Final merged dataframe with DirectProviderId
+        employee_locations_df: Employee locations dataframe from SQL query
+        logger: Logger instance
+        
+    Returns:
+        pd.DataFrame: DataFrame with WorkLocation column added
+    """
+    if 'DirectProviderId' not in final_df.columns:
+        logger.warning("DirectProviderId column not found, cannot add work locations")
+        return final_df
+    
+    if len(employee_locations_df) == 0 or 'ProviderContactId' not in employee_locations_df.columns:
+        logger.warning("Employee locations data not available, skipping work location assignment")
+        return final_df
+    
+    logger.info("Matching provider IDs to work locations...")
+    
+    # Create a mapping from ProviderContactId to WorkLocation
+    location_map = {}
+    for _, row in employee_locations_df.iterrows():
+        provider_id = row['ProviderContactId']
+        work_location = row.get('WorkLocation', None)
+        if pd.notna(provider_id) and pd.notna(work_location):
+            location_map[provider_id] = work_location
+    
+    # Add WorkLocation column
+    final_df['WorkLocation'] = final_df['DirectProviderId'].map(location_map)
+    
+    matched_count = final_df['WorkLocation'].notna().sum()
+    logger.info(f"Matched {matched_count} out of {len(final_df)} providers to work locations")
+    
+    return final_df
+
+
 def merge_data_main(transformed_df: pd.DataFrame = None, bacb_df: pd.DataFrame = None,
+                   employee_locations_df: pd.DataFrame = None,
                    transformed_file: str = None, bacb_file: str = None, save_file: bool = True) -> pd.DataFrame:
     """
     Main function to merge data.
@@ -207,6 +247,7 @@ def merge_data_main(transformed_df: pd.DataFrame = None, bacb_df: pd.DataFrame =
     Args:
         transformed_df (pd.DataFrame, optional): Transformed DataFrame. If None, will read from transformed_file.
         bacb_df (pd.DataFrame, optional): BACB DataFrame. If None, will read from bacb_file.
+        employee_locations_df (pd.DataFrame, optional): Employee locations DataFrame from SQL query. Used to add WorkLocation column.
         transformed_file (str, optional): Transformed CSV file path. Used if transformed_df is None.
         bacb_file (str, optional): BACB CSV file path. Used if bacb_df is None.
         save_file (bool): Whether to save file to disk. Default True.
@@ -259,6 +300,10 @@ def merge_data_main(transformed_df: pd.DataFrame = None, bacb_df: pd.DataFrame =
     # Merge data
     final_df = merge_data(transformed_df, bacb_df, logger)
     
+    # Add work locations from SQL query if available
+    if employee_locations_df is not None and len(employee_locations_df) > 0:
+        final_df = add_work_locations_from_sql(final_df, employee_locations_df, logger)
+    
     if save_file:
         # Archive existing files before saving new one
         today = datetime.now().strftime('%Y-%m-%d')
@@ -296,8 +341,33 @@ def merge_data_main(transformed_df: pd.DataFrame = None, bacb_df: pd.DataFrame =
             clinics = clinics_with_data[clinics_with_data > 0].index.tolist()
             logger.info(f"Saving Excel file with {len(clinics)} clinic sheets (clinics with data)")
             
+            # Sort clinics by WorkLocation if available, then alphabetically by clinic name
+            if 'WorkLocation' in final_df.columns:
+                # Create a mapping of clinic to work location (use most common work location for each clinic)
+                clinic_work_location = {}
+                for clinic in clinics:
+                    clinic_data = final_df[final_df['Clinic'] == clinic]
+                    work_locations = clinic_data['WorkLocation'].dropna()
+                    if len(work_locations) > 0:
+                        # Use the most common work location for this clinic
+                        most_common = work_locations.mode()
+                        clinic_work_location[clinic] = most_common.iloc[0] if len(most_common) > 0 else None
+                    else:
+                        clinic_work_location[clinic] = None
+                
+                # Sort by work location first (alphabetically, case-insensitive), then by clinic name
+                # Use a tuple where None/empty values sort last (using 'zzz' as a sentinel)
+                clinics_sorted = sorted(clinics, key=lambda c: (
+                    (clinic_work_location.get(c) or 'zzz').upper() if clinic_work_location.get(c) else 'zzz',  # Sort by work location (alphabetically, case-insensitive, None goes last)
+                    str(c).upper()  # Then by clinic name (alphabetically, case-insensitive)
+                ))
+                logger.info(f"Sorted clinics alphabetically by WorkLocation, then by clinic name")
+            else:
+                # Sort clinics alphabetically (case-insensitive)
+                clinics_sorted = sorted(clinics, key=lambda c: str(c).upper())
+            
             with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
-                for clinic in sorted(clinics):
+                for clinic in clinics_sorted:
                     clinic_data = final_df[final_df['Clinic'] == clinic].copy()
                     
                     # This should always have data since we filtered above, but double-check
@@ -309,6 +379,10 @@ def merge_data_main(transformed_df: pd.DataFrame = None, bacb_df: pd.DataFrame =
                     if 'TotalSupervisionPercent' in clinic_data.columns:
                         clinic_data = clinic_data.sort_values('TotalSupervisionPercent', ascending=True, na_position='last')
                         logger.info(f"  - Sorted {len(clinic_data)} rows by TotalSupervisionPercent (ascending)")
+                    
+                    # Remove WorkLocation column from output (used only for sorting)
+                    if 'WorkLocation' in clinic_data.columns:
+                        clinic_data = clinic_data.drop(columns=['WorkLocation'])
                     
                     # Excel sheet names must be <= 31 characters and can't contain certain characters
                     # Clean the clinic name for the sheet name
@@ -400,16 +474,16 @@ def merge_data_main(transformed_df: pd.DataFrame = None, bacb_df: pd.DataFrame =
             wb.save(output_file)
             logger.info(f"Saved final merged data to Excel file: {output_file}")
             
-            # Also save to Google Drive folder
-            google_drive_folder = '/Users/davidjcox/Library/CloudStorage/GoogleDrive-dcox@mosaictherapy.com/.shortcut-targets-by-id/1Mh9gqV27KkEEuyX6M35_SB_vTErRz7Gm/DailyRBTTracking'
-            google_drive_folder2 = 'G:/.shortcut-targets-by-id/10MVMkxZfVuZY9Q4RfE_vHZ2_kaQk85E-/RBT Supervision Tracking/DailyRBTTracking'
-            try:
-                save_to_google_drive_folder(output_file, google_drive_folder, logger)
-            except Exception as e:
-                try:
-                    save_to_google_drive_folder(output_file, google_drive_folder2, logger)
-                except Exception as e:
-                    logger.warning(f"Failed to save to Google Drive folder: {e}")
+            # # Also save to Google Drive folder
+            # google_drive_folder = '/Users/davidjcox/Library/CloudStorage/GoogleDrive-dcox@mosaictherapy.com/.shortcut-targets-by-id/1Mh9gqV27KkEEuyX6M35_SB_vTErRz7Gm/DailyRBTTracking'
+            # google_drive_folder2 = 'G:/.shortcut-targets-by-id/10MVMkxZfVuZY9Q4RfE_vHZ2_kaQk85E-/RBT Supervision Tracking/DailyRBTTracking'
+            # try:
+            #     save_to_google_drive_folder(output_file, google_drive_folder, logger)
+            # except Exception as e:
+            #     try:
+            #         save_to_google_drive_folder(output_file, google_drive_folder2, logger)
+            #     except Exception as e:
+            #         logger.warning(f"Failed to save to Google Drive folder: {e}")
         else:
             # Fallback: save as single sheet if Clinic column doesn't exist
             logger.warning("'Clinic' column not found, saving as single sheet")
@@ -418,6 +492,10 @@ def merge_data_main(transformed_df: pd.DataFrame = None, bacb_df: pd.DataFrame =
             if 'TotalSupervisionPercent' in final_df.columns:
                 final_df = final_df.sort_values('TotalSupervisionPercent', ascending=True, na_position='last')
                 logger.info(f"Sorted {len(final_df)} rows by TotalSupervisionPercent (ascending)")
+            
+            # Remove WorkLocation column from output (used only for sorting)
+            if 'WorkLocation' in final_df.columns:
+                final_df = final_df.drop(columns=['WorkLocation'])
             
             final_df.to_excel(output_file, index=False, engine='openpyxl')
             
@@ -502,16 +580,16 @@ def merge_data_main(transformed_df: pd.DataFrame = None, bacb_df: pd.DataFrame =
             wb.save(output_file)
             logger.info(f"Saved final merged data to: {output_file}")
             
-            # Also save to Google Drive folder
-            google_drive_folder = '/Users/davidjcox/Library/CloudStorage/GoogleDrive-dcox@mosaictherapy.com/.shortcut-targets-by-id/1Mh9gqV27KkEEuyX6M35_SB_vTErRz7Gm/DailyRBTTracking'
-            google_drive_folder2 = 'G:/.shortcut-targets-by-id/10MVMkxZfVuZY9Q4RfE_vHZ2_kaQk85E-/RBT Supervision Tracking/DailyRBTTracking'
-            try:
-                save_to_google_drive_folder(output_file, google_drive_folder, logger)
-            except Exception as e:
-                try:
-                    save_to_google_drive_folder(output_file, google_drive_folder2, logger)
-                except Exception as e:
-                    logger.warning(f"Failed to save to Google Drive folder: {e}")
+            # # Also save to Google Drive folder
+            # google_drive_folder = '/Users/davidjcox/Library/CloudStorage/GoogleDrive-dcox@mosaictherapy.com/.shortcut-targets-by-id/1Mh9gqV27KkEEuyX6M35_SB_vTErRz7Gm/DailyRBTTracking'
+            # google_drive_folder2 = 'G:/.shortcut-targets-by-id/10MVMkxZfVuZY9Q4RfE_vHZ2_kaQk85E-/RBT Supervision Tracking/DailyRBTTracking'
+            # try:
+            #     save_to_google_drive_folder(output_file, google_drive_folder, logger)
+            # except Exception as e:
+            #     try:
+            #         save_to_google_drive_folder(output_file, google_drive_folder2, logger)
+            #     except Exception as e:
+            #         logger.warning(f"Failed to save to Google Drive folder: {e}")
     
     logger.info("="*50)
     logger.info("Data merge completed successfully!")
