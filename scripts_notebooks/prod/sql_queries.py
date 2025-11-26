@@ -37,7 +37,7 @@ LEFT JOIN [insights].[insights].[Employee] AS e
    AND e.EmployeeLastName = pdir.LastName
 WHERE b.ServiceEndTime >= '{start_date}'
   AND b.ServiceEndTime <  '{end_date}'
-  AND sc.ServiceCode = '97153'
+  AND sc.ServiceCode IN ('97153', 'PDS | Technicians')
   AND (e.EmploymentPosition NOT IN ('BCBA', 'Board Certified Behavior Analyst')
        OR e.EmploymentPosition IS NULL)
 ORDER BY
@@ -68,7 +68,10 @@ LEFT JOIN [insights].[dw2].[Contacts] AS psup
     ON psup.ContactId = b.ProviderContactId
 WHERE b.ServiceEndTime >= '{start_date}'
   AND b.ServiceEndTime <  '{end_date}'
-  AND sc.ServiceCode IN ('97155','Non-billable: PM Admin','PDS | BCBA')
+  AND sc.ServiceCode IN (
+    '97155','Non-billable: PM Admin','PDS | BCBA', '0362T', '0368T', '0373T', 
+    'H0032', 'H0032 Program Management Student BCBS PREMERA', 'H2019', 'H2033'
+  )
 ORDER BY
     c.ClientFullName,
     b.ServiceStartTime;
