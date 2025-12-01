@@ -190,7 +190,7 @@ def execute_employee_locations_query(conn) -> pd.DataFrame:
         conn: Database connection
         
     Returns:
-        pd.DataFrame: Query results with ProviderContactId, ProviderFirstName, ProviderLastName, WorkLocation
+        pd.DataFrame: Query results with ProviderContactId, ProviderFirstName, ProviderLastName, WorkLocation (contains ProviderOfficeLocationName)
     """
     sql_query = EMPLOYEE_LOCATIONS_SQL_TEMPLATE
     logging.info("Executing employee locations query...")
@@ -223,24 +223,41 @@ def pull_data_main(start_date: str = None, end_date: str = None, save_files: boo
     password = os.getenv('CR_PW')
     
     # Determine start date
+    now = datetime.now()
+    today_str = now.strftime('%Y-%m-%d')
+    
     if start_date:
         logger.info(f"Using provided start date: {start_date}")
     else:
-        # Try to get latest date from existing files
-        raw_folder = '../../data/raw_pulls'
-        latest_file_date = get_latest_date_from_files(raw_folder)
-        if latest_file_date:
-            start_date = latest_file_date
-            logger.info(f"Using latest date from existing files: {start_date}")
+        # Determine date range based on current date
+        current_day = now.day
+        
+        if current_day <= 5:
+            # If in first 5 days of month, pull all data from previous month
+            # Get first day of previous month
+            if now.month == 1:
+                # If January, previous month is December of previous year
+                prev_month = 12
+                prev_year = now.year - 1
+            else:
+                prev_month = now.month - 1
+                prev_year = now.year
+            
+            start_date = datetime(prev_year, prev_month, 1).strftime('%Y-%m-%d')
+            logger.info(f"Current date is in first 5 days of month ({current_day}), pulling previous month data from: {start_date}")
+            
+            # Set end date to first day of current month (exclusive in SQL, so includes all of previous month)
+            if end_date is None:
+                end_date = datetime(now.year, now.month, 1).strftime('%Y-%m-%d')
+                logger.info(f"End date set to first day of current month (exclusive): {end_date}")
         else:
-            # Fallback to 7 days ago
-            start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
-            logger.info(f"No existing files found, using default date: {start_date}")
+            # Otherwise, pull month to date (from first day of current month)
+            start_date = datetime(now.year, now.month, 1).strftime('%Y-%m-%d')
+            logger.info(f"Pulling month-to-date data from: {start_date}")
     
     # Calculate end date (tomorrow to include all of today, unless provided)
     if end_date is None:
-        end_date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
-    today = datetime.now().strftime('%Y-%m-%d')
+        end_date = (now + timedelta(days=1)).strftime('%Y-%m-%d')
     
     logger.info("="*50)
     logger.info("Phase 1: Data Pulls")
@@ -271,25 +288,25 @@ def pull_data_main(start_date: str = None, end_date: str = None, save_files: boo
     
     if save_files:
         # Save direct services data
-        direct_output = f'../../data/raw_pulls/direct_services_{today}.csv'
+        direct_output = f'../../data/raw_pulls/direct_services_{today_str}.csv'
         os.makedirs(os.path.dirname(direct_output), exist_ok=True)
         direct_df.to_csv(direct_output, index=False)
         logger.info(f"Saved direct services data to: {direct_output}")
         
         # Save supervision services data
-        supervision_output = f'../../data/raw_pulls/supervision_services_{today}.csv'
+        supervision_output = f'../../data/raw_pulls/supervision_services_{today_str}.csv'
         os.makedirs(os.path.dirname(supervision_output), exist_ok=True)
         supervision_df.to_csv(supervision_output, index=False)
         logger.info(f"Saved supervision services data to: {supervision_output}")
         
         # Save BACB data
-        bacb_output = f'../../data/raw_pulls/bacb_supervision_hours_{today}.csv'
+        bacb_output = f'../../data/raw_pulls/bacb_supervision_hours_{today_str}.csv'
         os.makedirs(os.path.dirname(bacb_output), exist_ok=True)
         bacb_df.to_csv(bacb_output, index=False)
         logger.info(f"Saved BACB data to: {bacb_output}")
         
         # Save employee locations data
-        employee_locations_output = f'../../data/raw_pulls/employee_locations_{today}.csv'
+        employee_locations_output = f'../../data/raw_pulls/employee_locations_{today_str}.csv'
         os.makedirs(os.path.dirname(employee_locations_output), exist_ok=True)
         employee_locations_df.to_csv(employee_locations_output, index=False)
         logger.info(f"Saved employee locations data to: {employee_locations_output}")

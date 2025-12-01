@@ -109,17 +109,18 @@ def main():
     logger.info("="*70)
     
     # Determine dates
+    # Let pull_data_main handle the smart date logic (first 5 days = previous month, otherwise month-to-date)
     if args.start_date:
-        # If start date is provided, use it
+        # If start date is explicitly provided, use it
         start_date = args.start_date
         end_date = None  # Will default to tomorrow in pull_data_main
         logger.info(f"Using provided start date: {start_date}")
     else:
-        # Default: start of current month to today (not including today)
-        now = datetime.now()
-        start_date = now.replace(day=1).strftime('%Y-%m-%d')  # First day of current month
-        end_date = now.strftime('%Y-%m-%d')  # Today (exclusive in SQL, so up to but not including)
-        logger.info(f"Using default dates: {start_date} to {end_date} (start of month to today, exclusive)")
+        # Don't set default dates - let pull_data_main apply smart date logic
+        # (first 5 days of month = previous month, otherwise month-to-date)
+        start_date = None
+        end_date = None
+        logger.info("No start date provided - pull_data_main will determine date range based on current date")
     
     # Initialize variables for error handling
     exit_code = 0

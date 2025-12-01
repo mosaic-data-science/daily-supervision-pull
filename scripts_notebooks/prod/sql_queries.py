@@ -100,18 +100,16 @@ GROUP BY b.ProviderContactId
 ORDER BY b.ProviderContactId;
 """
 
-# SQL query template for employee locations (maps provider names to work locations)
+# SQL query template for employee locations (maps provider names to office locations)
 EMPLOYEE_LOCATIONS_SQL_TEMPLATE = """
 SELECT DISTINCT
     c.ContactId AS ProviderContactId,
     c.FirstName AS ProviderFirstName,
     c.LastName AS ProviderLastName,
-    e.EmployeePayrollCompany AS WorkLocation
+    p.ProviderOfficeLocationName AS WorkLocation
 FROM [insights].[dw2].[Contacts] AS c
-INNER JOIN [insights].[insights].[Employee] AS e
-    ON e.EmployeeFirstName = c.FirstName
-   AND e.EmployeeLastName = c.LastName
-WHERE e.EmployeePayrollCompany IS NOT NULL
-  AND LTRIM(RTRIM(e.EmployeeActiveStatus)) = 'active'  -- Only active employees (value is 'active' or 'nonActive')
+INNER JOIN [insights].[insights].[Provider] AS p
+    ON p.ProviderFirstName = c.FirstName
+   AND p.ProviderLastName = c.LastName
 ORDER BY c.LastName, c.FirstName;
 """
