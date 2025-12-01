@@ -157,26 +157,52 @@ def merge_data(transformed_df: pd.DataFrame, bacb_df: pd.DataFrame, logger: logg
     )
     
     # Fill NaN values for BACB columns (providers without BACB supervision)
-    merged_df['BACBSupervisionCodes_binary'] = merged_df['BACBSupervisionCodes_binary'].fillna(0).astype(int)
-    merged_df['BACBSupervisionHours'] = merged_df['BACBSupervisionHours'].fillna(0.0)
-    
-    # Rename column and convert 1/0 to Yes/No
-    merged_df['BACBSupervisionCodesOccurred'] = merged_df['BACBSupervisionCodes_binary'].map({1: 'Yes', 0: 'No'})
-    merged_df.drop(columns=['BACBSupervisionCodes_binary'], inplace=True, errors='ignore')
+    if len(merged_df) > 0:
+        # Only process if DataFrame has rows
+        if 'BACBSupervisionCodes_binary' in merged_df.columns:
+            merged_df['BACBSupervisionCodes_binary'] = pd.to_numeric(merged_df['BACBSupervisionCodes_binary'], errors='coerce').fillna(0).astype(int)
+        if 'BACBSupervisionHours' in merged_df.columns:
+            merged_df['BACBSupervisionHours'] = pd.to_numeric(merged_df['BACBSupervisionHours'], errors='coerce').fillna(0.0)
+        
+        # Rename column and convert 1/0 to Yes/No
+        if 'BACBSupervisionCodes_binary' in merged_df.columns:
+            merged_df['BACBSupervisionCodesOccurred'] = merged_df['BACBSupervisionCodes_binary'].map({1: 'Yes', 0: 'No'})
+            merged_df.drop(columns=['BACBSupervisionCodes_binary'], inplace=True, errors='ignore')
+    else:
+        # Empty DataFrame - ensure columns exist with proper types
+        if 'BACBSupervisionCodes_binary' in merged_df.columns:
+            merged_df.drop(columns=['BACBSupervisionCodes_binary'], inplace=True, errors='ignore')
+        if 'BACBSupervisionHours' not in merged_df.columns:
+            merged_df['BACBSupervisionHours'] = pd.Series(dtype='float64')
+        if 'BACBSupervisionCodesOccurred' not in merged_df.columns:
+            merged_df['BACBSupervisionCodesOccurred'] = pd.Series(dtype='object')
     
     # Drop the ProviderContactId column since we're using DirectProviderId
     merged_df.drop(columns=['ProviderContactId'], inplace=True, errors='ignore')
     
     # Add TotalSupervisionHours column (sum of SupervisionHours and BACBSupervisionHours)
     if 'SupervisionHours' in merged_df.columns and 'BACBSupervisionHours' in merged_df.columns:
-        merged_df['TotalSupervisionHours'] = merged_df['SupervisionHours'].fillna(0) + merged_df['BACBSupervisionHours'].fillna(0)
+        # Ensure numeric types before calculation
+        merged_df['SupervisionHours'] = pd.to_numeric(merged_df['SupervisionHours'], errors='coerce').fillna(0)
+        merged_df['BACBSupervisionHours'] = pd.to_numeric(merged_df['BACBSupervisionHours'], errors='coerce').fillna(0)
+        merged_df['TotalSupervisionHours'] = merged_df['SupervisionHours'] + merged_df['BACBSupervisionHours']
         logger.info("Added TotalSupervisionHours column (SupervisionHours + BACBSupervisionHours)")
     
     # Calculate percentage of direct hours supervised using TotalSupervisionHours
     if 'TotalSupervisionHours' in merged_df.columns and 'DirectHours' in merged_df.columns:
-        merged_df['TotalSupervisionPercent'] = round(
-            100 * (merged_df['TotalSupervisionHours'] / merged_df['DirectHours'].replace(0, pd.NA)), 2
-        )
+        # Ensure numeric types before calculation
+        merged_df['DirectHours'] = pd.to_numeric(merged_df['DirectHours'], errors='coerce')
+        merged_df['TotalSupervisionHours'] = pd.to_numeric(merged_df['TotalSupervisionHours'], errors='coerce').fillna(0)
+        
+        # Calculate percentage, handling division by zero
+        if len(merged_df) > 0:
+            # Replace 0 with NA to avoid division by zero, then calculate percentage
+            direct_hours = merged_df['DirectHours'].replace(0, pd.NA)
+            percent_calc = 100 * (merged_df['TotalSupervisionHours'] / direct_hours)
+            merged_df['TotalSupervisionPercent'] = percent_calc.round(2)
+        else:
+            # Empty DataFrame - create column with proper dtype
+            merged_df['TotalSupervisionPercent'] = pd.Series(dtype='float64')
         logger.info("Added TotalSupervisionPercent column (100 * TotalSupervisionHours / DirectHours)")
     
     # Reorder columns to include BACB data - TotalSupervisionPercent should be last

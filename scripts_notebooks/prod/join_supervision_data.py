@@ -424,17 +424,29 @@ def join_supervision_data(direct_df: pd.DataFrame, supervision_df: pd.DataFrame,
     all_rows = named_direct_only_rows + named_overlap_rows + named_supervision_only_rows
     result_df = pd.DataFrame(all_rows)
     
-    # Filter out rows with zero hours
-    result_df = result_df[
-        (result_df['DirectHours'] > 0) | (result_df['SupervisionHours'] > 0)
-    ].copy()
-    
-    # Sort
-    result_df = result_df.sort_values(by=[
-        'ClientFullName', 'DirectLastName', 'DirectFirstName',
-        'SupervisorLastName', 'SupervisorFirstName',
-        'DirectServiceLocationName', 'SupervisorServiceLocationName'
-    ])
+    # Handle empty DataFrame case
+    if len(result_df) == 0:
+        logger.info("No data rows to process - returning empty DataFrame with expected columns")
+        # Return empty DataFrame with expected columns
+        result_df = pd.DataFrame(columns=[
+            'ClientContactId', 'ClientFullName', 'ClientOfficeLocationName',
+            'DirectProviderId', 'DirectFirstName', 'DirectLastName', 'DirectServiceLocationName',
+            'DirectHours', 'SupervisionHours',
+            'SupervisorFirstName', 'SupervisorLastName', 'SupervisorServiceLocationName',
+            'RowType'
+        ])
+    else:
+        # Filter out rows with zero hours
+        result_df = result_df[
+            (result_df['DirectHours'] > 0) | (result_df['SupervisionHours'] > 0)
+        ].copy()
+        
+        # Sort
+        result_df = result_df.sort_values(by=[
+            'ClientFullName', 'DirectLastName', 'DirectFirstName',
+            'SupervisorLastName', 'SupervisorFirstName',
+            'DirectServiceLocationName', 'SupervisorServiceLocationName'
+        ])
     
     logger.info(f"Final joined dataset: {len(result_df)} rows")
     logger.info(f"  - Direct only: {len(named_direct_only_rows)}")

@@ -58,9 +58,9 @@ def validate_environment():
     return True
 
 
-def send_simple_email(recipient_email: str, subject: str):
+def send_simple_email(recipient_email: str, subject: str, body: str = ''):
     """
-    Send a simple email with just a subject line using Gmail SMTP.
+    Send an email using Gmail SMTP.
     
     Parameters
     ----------
@@ -68,10 +68,12 @@ def send_simple_email(recipient_email: str, subject: str):
         Email address of the recipient.
     subject : str
         Subject line of the email.
+    body : str, optional
+        Email body content. If empty, sends email with just subject.
     """
     try:
         # Create message
-        msg = MIMEText('')
+        msg = MIMEText(body)
         msg['From'] = GMAIL_EMAIL
         msg['To'] = recipient_email
         msg['Subject'] = subject
@@ -104,18 +106,33 @@ def main():
         sys.exit(1)
     
     # Get status from command line argument (0 = success, 1 = failure)
+    # Optional third argument: error message
     if len(sys.argv) < 2:
-        logger.error("Usage: python send_email.py <status> where status is 0 (success) or 1 (failure)")
+        logger.error("Usage: python send_email.py <status> [error_message] where status is 0 (success) or 1 (failure)")
         sys.exit(1)
     
     try:
         status_code = int(sys.argv[1])
         logger.info(f"Status code received: {status_code}")
         
+        # Get error message if provided (for failures)
+        error_message = sys.argv[2] if len(sys.argv) > 2 else None
+        
         if status_code == 0:
             subject = "Daily Supervision Report: Success"
+            body = "The daily supervision pipeline completed successfully."
         elif status_code == 1:
             subject = "Daily Supervision Report: Failure"
+            if error_message:
+                # Format error message for email body
+                body = f"""The daily supervision pipeline failed.
+
+Error Details:
+{error_message}
+
+Please check the logs for more information."""
+            else:
+                body = "The daily supervision pipeline failed. Please check the logs for more information."
         else:
             logger.error(f"Invalid status code: {status_code}. Must be 0 or 1.")
             sys.exit(1)
@@ -127,7 +144,8 @@ def main():
         # Send email
         send_simple_email(
             recipient_email=RECIPIENT_EMAIL,
-            subject=subject
+            subject=subject,
+            body=body
         )
         
         logger.info("="*70)

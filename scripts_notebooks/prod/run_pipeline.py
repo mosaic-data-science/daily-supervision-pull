@@ -121,6 +121,10 @@ def main():
         end_date = now.strftime('%Y-%m-%d')  # Today (exclusive in SQL, so up to but not including)
         logger.info(f"Using default dates: {start_date} to {end_date} (start of month to today, exclusive)")
     
+    # Initialize variables for error handling
+    exit_code = 0
+    error_message = None
+    
     try:
         # Phase 1: Pull data from database
         logger.info("")
@@ -167,16 +171,20 @@ def main():
         logger.info(f"Columns: {', '.join(final_df.columns.tolist())}")
         logger.info("="*70)
         
-        exit_code = 0
-        
     except Exception as e:
         logger.error("="*70)
         logger.error("PIPELINE FAILED!")
         logger.error("="*70)
         logger.error(f"Error: {e}")
         import traceback
-        logger.error(traceback.format_exc())
+        error_traceback = traceback.format_exc()
+        logger.error(error_traceback)
         exit_code = 1
+        # Capture error message for email (limit length to avoid command line issues)
+        error_message = str(e)
+        # If error message is too long, truncate it
+        if len(error_message) > 500:
+            error_message = error_message[:500] + "... (truncated)"
     
     finally:
         # Send email notification regardless of success or failure
@@ -184,8 +192,16 @@ def main():
             script_dir = os.path.dirname(os.path.abspath(__file__))
             email_script = os.path.join(script_dir, 'send_email.py')
             logger.info(f"Sending email notification (exit_code: {exit_code})...")
+            
+            # Build command with optional error message
+            email_cmd = [sys.executable, email_script, str(exit_code)]
+            if error_message:
+                # Escape the error message for command line (replace newlines and quotes)
+                escaped_error = error_message.replace('\n', ' ').replace('\r', ' ').replace('"', "'")
+                email_cmd.append(escaped_error)
+            
             result = subprocess.run(
-                [sys.executable, email_script, str(exit_code)],
+                email_cmd,
                 capture_output=True,
                 text=True,
                 timeout=30
