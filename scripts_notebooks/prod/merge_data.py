@@ -227,15 +227,15 @@ def merge_data(transformed_df: pd.DataFrame, bacb_df: pd.DataFrame, logger: logg
 
 def add_work_locations_from_sql(final_df: pd.DataFrame, employee_locations_df: pd.DataFrame, logger: logging.Logger) -> pd.DataFrame:
     """
-    Add WorkLocation column to final dataframe by matching provider contact IDs.
+    Add WorkLocation column (containing ProviderOfficeLocationName) to final dataframe by matching provider contact IDs.
     
     Args:
         final_df: Final merged dataframe with DirectProviderId
-        employee_locations_df: Employee locations dataframe from SQL query
+        employee_locations_df: Employee locations dataframe from SQL query (contains ProviderOfficeLocationName as WorkLocation)
         logger: Logger instance
         
     Returns:
-        pd.DataFrame: DataFrame with WorkLocation column added
+        pd.DataFrame: DataFrame with WorkLocation column added (contains ProviderOfficeLocationName values)
     """
     if 'DirectProviderId' not in final_df.columns:
         logger.warning("DirectProviderId column not found, cannot add work locations")
@@ -245,21 +245,24 @@ def add_work_locations_from_sql(final_df: pd.DataFrame, employee_locations_df: p
         logger.warning("Employee locations data not available, skipping work location assignment")
         return final_df
     
-    logger.info("Matching provider IDs to work locations...")
+    logger.info("Matching provider IDs to office locations (ProviderOfficeLocationName)...")
     
-    # Create a mapping from ProviderContactId to WorkLocation
+    # Create a mapping from ProviderContactId to WorkLocation (which contains ProviderOfficeLocationName)
     location_map = {}
     for _, row in employee_locations_df.iterrows():
         provider_id = row['ProviderContactId']
         work_location = row.get('WorkLocation', None)
-        if pd.notna(provider_id) and pd.notna(work_location):
-            location_map[provider_id] = work_location
+        # Include empty strings as None so they get grouped into "z_NoOfficeLocationListed" tab
+        if pd.notna(provider_id):
+            if pd.notna(work_location) and str(work_location).strip() != '':
+                location_map[provider_id] = work_location
+            # If work_location is None or empty string, don't add to map (will remain NaN)
     
     # Add WorkLocation column
     final_df['WorkLocation'] = final_df['DirectProviderId'].map(location_map)
     
     matched_count = final_df['WorkLocation'].notna().sum()
-    logger.info(f"Matched {matched_count} out of {len(final_df)} providers to work locations")
+    logger.info(f"Matched {matched_count} out of {len(final_df)} providers to office locations")
     
     return final_df
 
@@ -359,40 +362,181 @@ def merge_data_main(transformed_df: pd.DataFrame = None, bacb_df: pd.DataFrame =
                 shutil.move(source_path, archive_path)
                 logger.info(f"Archived existing file: {file}")
         
-        # Group data by Clinic and save as Excel with separate sheets
-        if 'Clinic' in final_df.columns:
+        # Group data by ProviderOfficeLocationName (WorkLocation) and save as Excel with separate sheets
+        if 'WorkLocation' in final_df.columns:
+            # Replace empty/null WorkLocation values with special marker for "No Office Location Listed"
+            # First convert empty strings to NaN, then fill NaN with the special marker
+            final_df['WorkLocation'] = final_df['WorkLocation'].replace('', pd.NA).fillna('z_NoOfficeLocationListed')
+            
+            # Get unique office locations that actually have data
+            office_locations_with_data = final_df.groupby('WorkLocation').size()
+            office_locations = office_locations_with_data[office_locations_with_data > 0].index.tolist()
+            logger.info(f"Saving Excel file with {len(office_locations)} office location sheets (office locations with data)")
+            
+            # Sort office locations alphabetically (case-insensitive)
+            # "z_NoOfficeLocationListed" will naturally sort last due to the "z_" prefix
+            office_locations_sorted = sorted(office_locations, key=lambda loc: str(loc).upper())
+            logger.info(f"Sorted office locations alphabetically")
+            
+            with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
+                # Add employee locations tab as the first sheet
+                if employee_locations_df is not None and len(employee_locations_df) > 0:
+                    # Rename WorkLocation column to ProviderOfficeLocationName for clarity in the output
+                    employee_locations_display = employee_locations_df.copy()
+                    if 'WorkLocation' in employee_locations_display.columns:
+                        employee_locations_display = employee_locations_display.rename(columns={'WorkLocation': 'ProviderOfficeLocationName'})
+                    employee_locations_display.to_excel(writer, sheet_name='EmployeeLocationInCR', index=False)
+                    logger.info(f"  - Saved {len(employee_locations_display)} rows to sheet 'EmployeeLocationInCR'")
+                else:
+                    logger.warning("  - Employee locations data not available, skipping 'EmployeeLocationInCR' sheet")
+                
+                for office_location in office_locations_sorted:
+                    location_data = final_df[final_df['WorkLocation'] == office_location].copy()
+                    
+                    # This should always have data since we filtered above, but double-check
+                    if len(location_data) == 0:
+                        logger.warning(f"  - Skipping sheet for '{office_location}' (no data found)")
+                        continue
+                    
+                    # Sort by Clinic first, then by TotalSupervisionPercent (lowest values first)
+                    if 'Clinic' in location_data.columns:
+                        location_data = location_data.sort_values(by=['Clinic', 'TotalSupervisionPercent'] if 'TotalSupervisionPercent' in location_data.columns else ['Clinic'], ascending=True, na_position='last')
+                    elif 'TotalSupervisionPercent' in location_data.columns:
+                        location_data = location_data.sort_values('TotalSupervisionPercent', ascending=True, na_position='last')
+                    
+                    logger.info(f"  - Sorted {len(location_data)} rows by Clinic and TotalSupervisionPercent (ascending)")
+                    
+                    # Remove WorkLocation column from output (used only for grouping)
+                    if 'WorkLocation' in location_data.columns:
+                        location_data = location_data.drop(columns=['WorkLocation'])
+                    
+                    # Excel sheet names must be <= 31 characters and can't contain certain characters
+                    # Clean the office location name for the sheet name
+                    sheet_name = str(office_location)[:31].replace('/', '_').replace('\\', '_').replace('?', '_').replace('*', '_').replace('[', '_').replace(']', '_').replace(':', '_')
+                    location_data.to_excel(writer, sheet_name=sheet_name, index=False)
+                    logger.info(f"  - Saved {len(location_data)} rows to sheet '{sheet_name}'")
+            
+            # Add conditional formatting after writing
+            logger.info("Adding conditional formatting to Excel file...")
+            wb = load_workbook(output_file)
+            
+            for sheet_name in wb.sheetnames:
+                # Skip the EmployeeLocationInCR reference sheet
+                if sheet_name == 'EmployeeLocationInCR':
+                    continue
+                
+                ws = wb[sheet_name]
+                
+                # Find the column index for TotalSupervisionPercent
+                header_row = 1
+                pct_col_idx = None
+                for cell in ws[header_row]:
+                    if cell.value == 'TotalSupervisionPercent':
+                        pct_col_idx = cell.column_letter
+                        break
+                
+                if pct_col_idx:
+                    # Get the last row with data
+                    max_row = ws.max_row
+                    # Skip conditional formatting if there are no data rows (only header)
+                    if max_row <= 1:
+                        logger.info(f"  - Skipping conditional formatting for sheet '{sheet_name}' (no data rows)")
+                    else:
+                        data_range = f'{pct_col_idx}2:{pct_col_idx}{max_row}'
+                        
+                        # Add conditional formatting with discrete ranges:
+                        # 0-5% = Red background (inclusive)
+                        # >5% and <10% = Yellow background
+                        # >=10% = Green background
+                        
+                        # Red background for <= 5%
+                        red_fill = PatternFill(start_color='FF6B6B', end_color='FF6B6B', fill_type='solid')
+                        red_rule = CellIsRule(operator='lessThanOrEqual', formula=[5.0], fill=red_fill)
+                        ws.conditional_formatting.add(data_range, red_rule)
+                        
+                        # Yellow background for > 5% and < 10% (using formula for proper AND logic)
+                        yellow_fill = PatternFill(start_color='FFD93D', end_color='FFD93D', fill_type='solid')
+                        # Use FormulaRule with relative reference - Excel will adjust for each cell
+                        yellow_formula = f'AND({pct_col_idx}2>5, {pct_col_idx}2<10)'
+                        yellow_rule = FormulaRule(formula=[yellow_formula], fill=yellow_fill)
+                        ws.conditional_formatting.add(data_range, yellow_rule)
+                        
+                        # Green background for >= 10%
+                        green_fill = PatternFill(start_color='6BCF7F', end_color='6BCF7F', fill_type='solid')
+                        green_rule = CellIsRule(operator='greaterThanOrEqual', formula=[10.0], fill=green_fill)
+                        ws.conditional_formatting.add(data_range, green_rule)
+                        
+                        logger.info(f"  - Added conditional formatting to column {pct_col_idx} in sheet '{sheet_name}' (0-5% red, >5-<10% yellow, >=10% green)")
+                
+                # Find the column index for BACBSupervisionCodesOccurred and add conditional formatting
+                bacb_col_idx = None
+                for cell in ws[header_row]:
+                    if cell.value == 'BACBSupervisionCodesOccurred':
+                        bacb_col_idx = cell.column_letter
+                        break
+                
+                if bacb_col_idx:
+                    max_row = ws.max_row
+                    # Skip conditional formatting if there are no data rows (only header)
+                    if max_row <= 1:
+                        logger.info(f"  - Skipping BACB conditional formatting for sheet '{sheet_name}' (no data rows)")
+                    else:
+                        bacb_data_range = f'{bacb_col_idx}2:{bacb_col_idx}{max_row}'
+                        
+                        # Red background for "No"
+                        red_fill = PatternFill(start_color='FF6B6B', end_color='FF6B6B', fill_type='solid')
+                        red_formula = f'{bacb_col_idx}2="No"'
+                        red_rule = FormulaRule(formula=[red_formula], fill=red_fill)
+                        ws.conditional_formatting.add(bacb_data_range, red_rule)
+                        
+                        # Green background for "Yes"
+                        green_fill = PatternFill(start_color='6BCF7F', end_color='6BCF7F', fill_type='solid')
+                        green_formula = f'{bacb_col_idx}2="Yes"'
+                        green_rule = FormulaRule(formula=[green_formula], fill=green_fill)
+                        ws.conditional_formatting.add(bacb_data_range, green_rule)
+                        
+                        logger.info(f"  - Added conditional formatting to column {bacb_col_idx} in sheet '{sheet_name}' (No=red, Yes=green)")
+                
+                # Adjust column widths to fit content
+                logger.info(f"  - Adjusting column widths for sheet '{sheet_name}'...")
+                adjust_column_widths(ws, logger)
+            
+            wb.save(output_file)
+            logger.info(f"Saved final merged data to Excel file: {output_file}")
+            
+            # Also save to Google Drive folder
+            google_drive_folder = '/Users/davidjcox/Library/CloudStorage/GoogleDrive-dcox@mosaictherapy.com/.shortcut-targets-by-id/10MVMkxZfVuZY9Q4RfE_vHZ2_kaQk85E-/RBT Supervision Tracking/DailyRBTTracking'
+            google_drive_folder2 = 'G:/.shortcut-targets-by-id/10MVMkxZfVuZY9Q4RfE_vHZ2_kaQk85E-/RBT Supervision Tracking/DailyRBTTracking'
+            try:
+                save_to_google_drive_folder(output_file, google_drive_folder, logger)
+            except Exception as e:
+                try:
+                    save_to_google_drive_folder(output_file, google_drive_folder2, logger)
+                except Exception as e:
+                    logger.warning(f"Failed to save to Google Drive folder: {e}")
+        elif 'Clinic' in final_df.columns:
+            # Fallback: Group data by Clinic if WorkLocation is not available
             # Get unique clinics that actually have data
             # Filter to only clinics that have at least one row
             clinics_with_data = final_df.groupby('Clinic').size()
             clinics = clinics_with_data[clinics_with_data > 0].index.tolist()
             logger.info(f"Saving Excel file with {len(clinics)} clinic sheets (clinics with data)")
             
-            # Sort clinics by WorkLocation if available, then alphabetically by clinic name
-            if 'WorkLocation' in final_df.columns:
-                # Create a mapping of clinic to work location (use most common work location for each clinic)
-                clinic_work_location = {}
-                for clinic in clinics:
-                    clinic_data = final_df[final_df['Clinic'] == clinic]
-                    work_locations = clinic_data['WorkLocation'].dropna()
-                    if len(work_locations) > 0:
-                        # Use the most common work location for this clinic
-                        most_common = work_locations.mode()
-                        clinic_work_location[clinic] = most_common.iloc[0] if len(most_common) > 0 else None
-                    else:
-                        clinic_work_location[clinic] = None
-                
-                # Sort by work location first (alphabetically, case-insensitive), then by clinic name
-                # Use a tuple where None/empty values sort last (using 'zzz' as a sentinel)
-                clinics_sorted = sorted(clinics, key=lambda c: (
-                    (clinic_work_location.get(c) or 'zzz').upper() if clinic_work_location.get(c) else 'zzz',  # Sort by work location (alphabetically, case-insensitive, None goes last)
-                    str(c).upper()  # Then by clinic name (alphabetically, case-insensitive)
-                ))
-                logger.info(f"Sorted clinics alphabetically by WorkLocation, then by clinic name")
-            else:
-                # Sort clinics alphabetically (case-insensitive)
-                clinics_sorted = sorted(clinics, key=lambda c: str(c).upper())
+            # Sort clinics alphabetically (case-insensitive)
+            clinics_sorted = sorted(clinics, key=lambda c: str(c).upper())
             
             with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
+                # Add employee locations tab as the first sheet
+                if employee_locations_df is not None and len(employee_locations_df) > 0:
+                    # Rename WorkLocation column to ProviderOfficeLocationName for clarity in the output
+                    employee_locations_display = employee_locations_df.copy()
+                    if 'WorkLocation' in employee_locations_display.columns:
+                        employee_locations_display = employee_locations_display.rename(columns={'WorkLocation': 'ProviderOfficeLocationName'})
+                    employee_locations_display.to_excel(writer, sheet_name='EmployeeLocationInCR', index=False)
+                    logger.info(f"  - Saved {len(employee_locations_display)} rows to sheet 'EmployeeLocationInCR'")
+                else:
+                    logger.warning("  - Employee locations data not available, skipping 'EmployeeLocationInCR' sheet")
+                
                 for clinic in clinics_sorted:
                     clinic_data = final_df[final_df['Clinic'] == clinic].copy()
                     
@@ -406,10 +550,6 @@ def merge_data_main(transformed_df: pd.DataFrame = None, bacb_df: pd.DataFrame =
                         clinic_data = clinic_data.sort_values('TotalSupervisionPercent', ascending=True, na_position='last')
                         logger.info(f"  - Sorted {len(clinic_data)} rows by TotalSupervisionPercent (ascending)")
                     
-                    # Remove WorkLocation column from output (used only for sorting)
-                    if 'WorkLocation' in clinic_data.columns:
-                        clinic_data = clinic_data.drop(columns=['WorkLocation'])
-                    
                     # Excel sheet names must be <= 31 characters and can't contain certain characters
                     # Clean the clinic name for the sheet name
                     sheet_name = str(clinic)[:31].replace('/', '_').replace('\\', '_').replace('?', '_').replace('*', '_').replace('[', '_').replace(']', '_').replace(':', '_')
@@ -421,6 +561,10 @@ def merge_data_main(transformed_df: pd.DataFrame = None, bacb_df: pd.DataFrame =
             wb = load_workbook(output_file)
             
             for sheet_name in wb.sheetnames:
+                # Skip the EmployeeLocationInCR reference sheet
+                if sheet_name == 'EmployeeLocationInCR':
+                    continue
+                
                 ws = wb[sheet_name]
                 
                 # Find the column index for TotalSupervisionPercent
@@ -523,7 +667,20 @@ def merge_data_main(transformed_df: pd.DataFrame = None, bacb_df: pd.DataFrame =
             if 'WorkLocation' in final_df.columns:
                 final_df = final_df.drop(columns=['WorkLocation'])
             
-            final_df.to_excel(output_file, index=False, engine='openpyxl')
+            with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
+                # Add employee locations tab as the first sheet
+                if employee_locations_df is not None and len(employee_locations_df) > 0:
+                    # Rename WorkLocation column to ProviderOfficeLocationName for clarity in the output
+                    employee_locations_display = employee_locations_df.copy()
+                    if 'WorkLocation' in employee_locations_display.columns:
+                        employee_locations_display = employee_locations_display.rename(columns={'WorkLocation': 'ProviderOfficeLocationName'})
+                    employee_locations_display.to_excel(writer, sheet_name='EmployeeLocationInCR', index=False)
+                    logger.info(f"  - Saved {len(employee_locations_display)} rows to sheet 'EmployeeLocationInCR'")
+                else:
+                    logger.warning("  - Employee locations data not available, skipping 'EmployeeLocationInCR' sheet")
+                
+                # Add the main data sheet
+                final_df.to_excel(writer, sheet_name='Data', index=False)
             
             # Add conditional formatting
             logger.info("Adding conditional formatting to Excel file...")
