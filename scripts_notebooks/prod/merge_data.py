@@ -128,6 +128,31 @@ def save_to_google_drive_folder(source_file: str, target_folder: str, logger: lo
     logger.info(f"Saved file to Google Drive folder: {target_file}")
 
 
+def save_to_google_drive_archive_folder(source_file: str, target_folder: str, logger: logging.Logger):
+    """
+    Save the Excel file directly to Google Drive archived folder (for FINAL month files).
+    
+    Args:
+        source_file (str): Path to the source Excel file
+        target_folder (str): Path to the target Google Drive folder (main folder)
+        logger: Logger instance
+    """
+    # Create archive folder in target location
+    archive_folder = os.path.join(target_folder, 'archived')
+    os.makedirs(archive_folder, exist_ok=True)
+    
+    # Copy the file directly to the archive folder
+    output_filename = os.path.basename(source_file)
+    target_file = os.path.join(archive_folder, output_filename)
+    
+    # If file already exists in archive, overwrite it (for updates)
+    if os.path.exists(target_file):
+        logger.info(f"Overwriting existing file in Google Drive archive: {output_filename}")
+    
+    shutil.copy2(source_file, target_file)
+    logger.info(f"Saved file to Google Drive archive folder: {target_file}")
+
+
 def merge_data(transformed_df: pd.DataFrame, bacb_df: pd.DataFrame, logger: logging.Logger) -> pd.DataFrame:
     """
     Merge BACB supervision data with transformed supervision data.
@@ -269,7 +294,9 @@ def add_work_locations_from_sql(final_df: pd.DataFrame, employee_locations_df: p
 
 def merge_data_main(transformed_df: pd.DataFrame = None, bacb_df: pd.DataFrame = None,
                    employee_locations_df: pd.DataFrame = None,
-                   transformed_file: str = None, bacb_file: str = None, save_file: bool = True) -> pd.DataFrame:
+                   transformed_file: str = None, bacb_file: str = None, save_file: bool = True,
+                   output_file: str = None, save_to_archive: bool = False, archive_date: str = None,
+                   archive_file_exists: bool = False) -> pd.DataFrame:
     """
     Main function to merge data.
     
@@ -280,6 +307,10 @@ def merge_data_main(transformed_df: pd.DataFrame = None, bacb_df: pd.DataFrame =
         transformed_file (str, optional): Transformed CSV file path. Used if transformed_df is None.
         bacb_file (str, optional): BACB CSV file path. Used if bacb_df is None.
         save_file (bool): Whether to save file to disk. Default True.
+        output_file (str, optional): Explicit output file path. If None, will use default naming.
+        save_to_archive (bool): If True, save to archived folder instead of main folder. Default False.
+        archive_date (str, optional): Date string for _updated_{date} suffix when saving to archive. If None, uses today's date.
+        archive_file_exists (bool): If True, existing file found and will use _updated suffix. If False, creates new file without suffix.
         
     Returns:
         pd.DataFrame: Final merged DataFrame
@@ -334,33 +365,60 @@ def merge_data_main(transformed_df: pd.DataFrame = None, bacb_df: pd.DataFrame =
         final_df = add_work_locations_from_sql(final_df, employee_locations_df, logger)
     
     if save_file:
-        # Archive existing files before saving new one
         today = datetime.now().strftime('%Y-%m-%d')
-        output_file = f'../../data/transformed_supervision_daily/daily_supervision_hours_transformed_{today}.xlsx'
         archive_folder = f'../../data/transformed_supervision_daily/archived'
+        
+        # Determine output file path
+        if output_file is None:
+            if save_to_archive:
+                if archive_date:
+                    # Parse archive_date to get month name
+                    try:
+                        archive_dt = datetime.strptime(archive_date, '%Y-%m-%d')
+                        month_name = archive_dt.strftime('%B')  # Full month name (e.g., "November")
+                    except ValueError:
+                        month_name = "Unknown"
+                    
+                    if archive_file_exists:
+                        # File exists - use _updated_{date} suffix
+                        # Format: daily_supervision_hours_transformed_{archive_date}_FINAL_{month}_updated_{today}.xlsx
+                        base_filename = f'daily_supervision_hours_transformed_{archive_date}_FINAL_{month_name}_updated_{today}.xlsx'
+                    else:
+                        # File doesn't exist - create new one with FINAL and month name
+                        # Format: daily_supervision_hours_transformed_{archive_date}_FINAL_{month}.xlsx
+                        base_filename = f'daily_supervision_hours_transformed_{archive_date}_FINAL_{month_name}.xlsx'
+                else:
+                    # Fallback if archive_date not provided
+                    base_filename = f'daily_supervision_hours_transformed_{today}.xlsx'
+                output_file = os.path.join(archive_folder, base_filename)
+            else:
+                output_file = f'../../data/transformed_supervision_daily/daily_supervision_hours_transformed_{today}.xlsx'
         
         # Ensure directories exist
         os.makedirs(os.path.dirname(output_file), exist_ok=True)
         os.makedirs(archive_folder, exist_ok=True)
         
-        # Archive existing files (CSV and XLSX, excluding the one we're about to create)
-        output_filename = os.path.basename(output_file)
-        if os.path.exists(os.path.dirname(output_file)):
-            existing_files = [f for f in os.listdir(os.path.dirname(output_file)) 
-                            if (f.endswith('.csv') or f.endswith('.xlsx')) and f != output_filename]
-            
-            for file in existing_files:
-                source_path = os.path.join(os.path.dirname(output_file), file)
-                archive_path = os.path.join(archive_folder, file)
+        # Only archive existing files if NOT saving to archive folder
+        if not save_to_archive:
+            # Archive existing files (CSV and XLSX, excluding the one we're about to create)
+            output_filename = os.path.basename(output_file)
+            main_folder = os.path.dirname(output_file)
+            if os.path.exists(main_folder):
+                existing_files = [f for f in os.listdir(main_folder) 
+                                if (f.endswith('.csv') or f.endswith('.xlsx')) and f != output_filename]
                 
-                # If file already exists in archive, add timestamp to avoid conflicts
-                if os.path.exists(archive_path):
-                    name, ext = os.path.splitext(file)
-                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                    archive_path = os.path.join(archive_folder, f'{name}_{timestamp}{ext}')
-                
-                shutil.move(source_path, archive_path)
-                logger.info(f"Archived existing file: {file}")
+                for file in existing_files:
+                    source_path = os.path.join(main_folder, file)
+                    archive_path = os.path.join(archive_folder, file)
+                    
+                    # If file already exists in archive, add timestamp to avoid conflicts
+                    if os.path.exists(archive_path):
+                        name, ext = os.path.splitext(file)
+                        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                        archive_path = os.path.join(archive_folder, f'{name}_{timestamp}{ext}')
+                    
+                    shutil.move(source_path, archive_path)
+                    logger.info(f"Archived existing file: {file}")
         
         # Group data by ProviderOfficeLocationName (WorkLocation) and save as Excel with separate sheets
         if 'WorkLocation' in final_df.columns:
@@ -504,16 +562,28 @@ def merge_data_main(transformed_df: pd.DataFrame = None, bacb_df: pd.DataFrame =
             wb.save(output_file)
             logger.info(f"Saved final merged data to Excel file: {output_file}")
             
-            # Also save to Google Drive folder
+            # Save to Google Drive folder
             google_drive_folder = '/Users/davidjcox/Library/CloudStorage/GoogleDrive-dcox@mosaictherapy.com/.shortcut-targets-by-id/10MVMkxZfVuZY9Q4RfE_vHZ2_kaQk85E-/RBT Supervision Tracking/DailyRBTTracking'
             google_drive_folder2 = 'G:/.shortcut-targets-by-id/10MVMkxZfVuZY9Q4RfE_vHZ2_kaQk85E-/RBT Supervision Tracking/DailyRBTTracking'
-            try:
-                save_to_google_drive_folder(output_file, google_drive_folder, logger)
-            except Exception as e:
+            
+            if save_to_archive:
+                # Save directly to Google Drive archived folder
                 try:
-                    save_to_google_drive_folder(output_file, google_drive_folder2, logger)
+                    save_to_google_drive_archive_folder(output_file, google_drive_folder, logger)
                 except Exception as e:
-                    logger.warning(f"Failed to save to Google Drive folder: {e}")
+                    try:
+                        save_to_google_drive_archive_folder(output_file, google_drive_folder2, logger)
+                    except Exception as e2:
+                        logger.warning(f"Failed to save to Google Drive archive folder: {e2}")
+            else:
+                # Save to main Google Drive folder (which will archive old files)
+                try:
+                    save_to_google_drive_folder(output_file, google_drive_folder, logger)
+                except Exception as e:
+                    try:
+                        save_to_google_drive_folder(output_file, google_drive_folder2, logger)
+                    except Exception as e2:
+                        logger.warning(f"Failed to save to Google Drive folder: {e2}")
         elif 'Clinic' in final_df.columns:
             # Fallback: Group data by Clinic if WorkLocation is not available
             # Get unique clinics that actually have data
@@ -644,16 +714,28 @@ def merge_data_main(transformed_df: pd.DataFrame = None, bacb_df: pd.DataFrame =
             wb.save(output_file)
             logger.info(f"Saved final merged data to Excel file: {output_file}")
             
-            # Also save to Google Drive folder
+            # Save to Google Drive folder
             google_drive_folder = '/Users/davidjcox/Library/CloudStorage/GoogleDrive-dcox@mosaictherapy.com/.shortcut-targets-by-id/10MVMkxZfVuZY9Q4RfE_vHZ2_kaQk85E-/RBT Supervision Tracking/DailyRBTTracking'
             google_drive_folder2 = 'G:/.shortcut-targets-by-id/10MVMkxZfVuZY9Q4RfE_vHZ2_kaQk85E-/RBT Supervision Tracking/DailyRBTTracking'
-            try:
-                save_to_google_drive_folder(output_file, google_drive_folder, logger)
-            except Exception as e:
+            
+            if save_to_archive:
+                # Save directly to Google Drive archived folder
                 try:
-                    save_to_google_drive_folder(output_file, google_drive_folder2, logger)
+                    save_to_google_drive_archive_folder(output_file, google_drive_folder, logger)
                 except Exception as e:
-                    logger.warning(f"Failed to save to Google Drive folder: {e}")
+                    try:
+                        save_to_google_drive_archive_folder(output_file, google_drive_folder2, logger)
+                    except Exception as e2:
+                        logger.warning(f"Failed to save to Google Drive archive folder: {e2}")
+            else:
+                # Save to main Google Drive folder (which will archive old files)
+                try:
+                    save_to_google_drive_folder(output_file, google_drive_folder, logger)
+                except Exception as e:
+                    try:
+                        save_to_google_drive_folder(output_file, google_drive_folder2, logger)
+                    except Exception as e2:
+                        logger.warning(f"Failed to save to Google Drive folder: {e2}")
         else:
             # Fallback: save as single sheet if Clinic column doesn't exist
             logger.warning("'Clinic' column not found, saving as single sheet")
@@ -763,16 +845,28 @@ def merge_data_main(transformed_df: pd.DataFrame = None, bacb_df: pd.DataFrame =
             wb.save(output_file)
             logger.info(f"Saved final merged data to: {output_file}")
             
-            # Also save to Google Drive folder
+            # Save to Google Drive folder
             google_drive_folder = '/Users/davidjcox/Library/CloudStorage/GoogleDrive-dcox@mosaictherapy.com/.shortcut-targets-by-id/10MVMkxZfVuZY9Q4RfE_vHZ2_kaQk85E-/RBT Supervision Tracking/DailyRBTTracking'
             google_drive_folder2 = 'G:/.shortcut-targets-by-id/10MVMkxZfVuZY9Q4RfE_vHZ2_kaQk85E-/RBT Supervision Tracking/DailyRBTTracking'
-            try:
-                save_to_google_drive_folder(output_file, google_drive_folder, logger)
-            except Exception as e:
+            
+            if save_to_archive:
+                # Save directly to Google Drive archived folder
                 try:
-                    save_to_google_drive_folder(output_file, google_drive_folder2, logger)
+                    save_to_google_drive_archive_folder(output_file, google_drive_folder, logger)
                 except Exception as e:
-                    logger.warning(f"Failed to save to Google Drive folder: {e}")
+                    try:
+                        save_to_google_drive_archive_folder(output_file, google_drive_folder2, logger)
+                    except Exception as e2:
+                        logger.warning(f"Failed to save to Google Drive archive folder: {e2}")
+            else:
+                # Save to main Google Drive folder (which will archive old files)
+                try:
+                    save_to_google_drive_folder(output_file, google_drive_folder, logger)
+                except Exception as e:
+                    try:
+                        save_to_google_drive_folder(output_file, google_drive_folder2, logger)
+                    except Exception as e2:
+                        logger.warning(f"Failed to save to Google Drive folder: {e2}")
     
     logger.info("="*50)
     logger.info("Data merge completed successfully!")
