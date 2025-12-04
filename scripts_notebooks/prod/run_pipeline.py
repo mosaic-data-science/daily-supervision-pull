@@ -269,7 +269,11 @@ def run_pipeline_phases(start_date: str = None, end_date: str = None,
 
 
 def main():
-    """Main function to orchestrate the pipeline with dual-run logic for days 1-5."""
+    """
+    Main function to orchestrate the pipeline with scheduling logic:
+    - Days 1-5: Run both previous month update AND current month-to-date
+    - Days 6-31: Run only current month-to-date
+    """
     parser = argparse.ArgumentParser(description='Run the data processing pipeline')
     parser.add_argument('--start-date', type=str, help='Start date in YYYY-MM-DD format (optional)')
     
@@ -292,10 +296,11 @@ def main():
     overall_error_message = None
     
     # Determine if we need to run previous month update (days 1-5)
+    # On days 1-5, we update the previous month's archived data
     run_previous_month = (current_day <= 5)
     
     if run_previous_month:
-        logger.info(f"Current day is {current_day} (days 1-5) - will update previous month's data")
+        logger.info(f"Current day is {current_day} (days 1-5) - will update previous month's data AND run current month-to-date")
         
         # Get previous month's last day
         prev_month_last_day = get_previous_month_last_day()
@@ -345,8 +350,10 @@ def main():
         else:
             logger.info("Previous month update completed successfully!")
     
-    # Determine if we need to run current month (days 2-31)
-    run_current_month = (current_day >= 2)
+    # Determine if we need to run current month (days 1-31)
+    # Note: Days 1-5 run both previous month update AND current month-to-date
+    # Days 6-31 run only current month-to-date
+    run_current_month = (current_day >= 1)
     
     if run_current_month:
         logger.info("")

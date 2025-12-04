@@ -386,7 +386,7 @@ def merge_data_main(transformed_df: pd.DataFrame = None, bacb_df: pd.DataFrame =
                     else:
                         # File doesn't exist - create new one with FINAL and month name
                         # Format: daily_supervision_hours_transformed_{archive_date}_FINAL_{month}.xlsx
-                        base_filename = f'daily_supervision_hours_transformed_{archive_date}_FINAL_{month_name}.xlsx'
+                        base_filename = f'daily_supervision_hours_transformed_{archive_date}_FINAL_{month_name}_updated_{today}.xlsx'
                 else:
                     # Fallback if archive_date not provided
                     base_filename = f'daily_supervision_hours_transformed_{today}.xlsx'
